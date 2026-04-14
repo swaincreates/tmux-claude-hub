@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Restore claude panes from the hub window back to their original windows.
+
+set -euo pipefail
+
+SESSION=$(tmux display-message -p '#S')
+STATE_FILE="${TMPDIR:-/tmp}/tmux-claude-collect-${SESSION}.txt"
+
+if [[ ! -f "$STATE_FILE" ]]; then
+  tmux display-message "No saved state found for session '$SESSION'"
+  exit 1
+fi
+
+RESTORED=0
+ORIGIN_WIN=""
+
+while read -r type pane_id win_idx win_name; do
+  if [[ "$type" == "ORIGIN" ]]; then
+    ORIGIN_WIN="$pane_id"  # field reuse: ORIGIN <win_idx> <pane_id>
+    continue
+  fi
+  if [[ "$type" == "CLAUDE" ]]; then
+    # Clear the label we set during collect
+    tmux select-pane -t "$pane_id" -T "" 2>/dev/null || true
+
+    if tmux list-windows -t "$SESSION" -F '#{window_index}' | grep -qx "$win_idx"; then
+      tmux join-pane -s "$pane_id" -t "${SESSION}:${win_idx}"
+    else
+      # Original window gone — open a new one rather than losing the pane
+      tmux new-window -t "${SESSION}" -n "${win_name}"
+      NEW_WIN=$(tmux display-message -p '#{window_index}')
+      tmux join-pane -s "$pane_id" -t "${SESSION}:${NEW_WIN}"
+    fi
+    ((RESTORED++)) || true
+  elif [[ "$type" == "PLACEHOLDER" ]]; then
+    # Kill the temporary pane we created during collect to keep the window alive
+    tmux kill-pane -t "$pane_id" 2>/dev/null || true
+  fi
+done < "$STATE_FILE"
+
+rm -f "$STATE_FILE"
+
+# Hub should be empty now and auto-close, but force it just in case
+tmux kill-window -t "${SESSION}:0" 2>/dev/null || true
+
+# Return to the window we were in before collecting
+if [[ -n "$ORIGIN_WIN" ]]; then
+  tmux select-window -t "${SESSION}:${ORIGIN_WIN}" 2>/dev/null || true
+fi
+
+tmux display-message "Restored $RESTORED claude pane(s)"

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Collect all claude panes in the current session into a hub window.
+# Run tmux-claude-restore to send them back.
+
+set -euo pipefail
+
+SESSION=$(tmux display-message -p '#S')
+STATE_FILE="${TMPDIR:-/tmp}/tmux-claude-collect-${SESSION}.txt"
+
+if [[ -f "$STATE_FILE" ]]; then
+  tmux display-message "Already collected — run tmux-claude-restore first"
+  exit 1
+fi
+
+# Find panes running claude in this session only.
+# Claude Code sets its process title to its version number (e.g. "2.1.108"),
+# so we match on that pattern — more reliable than pane title which changes with task state.
+# Use tab delimiter so window names with spaces don't break field parsing.
+CLAUDE_PANES=$(tmux list-panes -s -t "$SESSION" \
+  -F "#{pane_id}	#{window_index}	#{window_name}	#{pane_current_command}" \
+  | awk -F'\t' '$4 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $1 "\t" $2 "\t" $3}')
+
+COUNT=$(echo "$CLAUDE_PANES" | grep -c . || true)
+
+if [[ "$COUNT" -eq 0 ]]; then
+  tmux display-message "No claude panes found in session '$SESSION'"
+  exit 0
+fi
+
+> "$STATE_FILE"
+
+# Save current window and pane so restore/hub can return here
+ORIGIN_WIN=$(tmux display-message -p '#{window_index}')
+ORIGIN_PANE=$(tmux display-message -p '#{pane_id}')
+echo "ORIGIN $ORIGIN_WIN $ORIGIN_PANE" >> "$STATE_FILE"
+
+# Create hub window and capture the initial empty pane to kill after
+tmux new-window -t "${SESSION}:0" -n "claude-hub"
+INITIAL_PANE=$(tmux display-message -t "${SESSION}:claude-hub" -p '#{pane_id}')
+
+# Enable labeled pane borders on the hub window
+tmux set-window-option -t "${SESSION}:claude-hub" pane-border-status top
+tmux set-window-option -t "${SESSION}:claude-hub" pane-border-format " #{pane_title} "
+
+# Move each claude pane into the hub
+while IFS=$'\t' read -r pane_id win_idx win_name; do
+  echo "CLAUDE $pane_id $win_idx $win_name" >> "$STATE_FILE"
+
+  # If this is the only pane in the window, create a placeholder so the window survives
+  PANE_COUNT=$(tmux list-panes -t "${SESSION}:${win_idx}" -F '#{pane_id}' | wc -l | tr -d ' ')
+  if [[ "$PANE_COUNT" -eq 1 ]]; then
+    tmux split-window -t "${SESSION}:${win_idx}" -d
+    PLACEHOLDER=$(tmux list-panes -t "${SESSION}:${win_idx}" -F '#{pane_id}' | tail -1)
+    echo "PLACEHOLDER $PLACEHOLDER $win_idx" >> "$STATE_FILE"
+  fi
+
+  tmux join-pane -s "$pane_id" -t "${SESSION}:claude-hub"
+
+  # Label the pane with its source window name
+  tmux select-pane -t "$pane_id" -T "$win_name"
+done <<< "$CLAUDE_PANES"
+
+# Kill the initial empty shell pane
+tmux kill-pane -t "$INITIAL_PANE" 2>/dev/null || true
+
+tmux select-layout -t "${SESSION}:claude-hub" tiled
+tmux select-window -t "${SESSION}:claude-hub"
+tmux select-pane -t "$ORIGIN_PANE" 2>/dev/null || true
+
+tmux display-message "Collected $COUNT claude pane(s) — prefix+U to restore"
