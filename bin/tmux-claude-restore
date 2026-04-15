@@ -22,7 +22,7 @@ RESTORED=0
 ORIGIN_WIN=""
 
 # First pass: restore panes and kill placeholders
-while read -r type pane_id win_idx win_name; do
+while read -r type pane_id win_idx win_name pane_idx; do
   if [[ "$type" == "ORIGIN" ]]; then
     ORIGIN_WIN="$pane_id"  # field reuse: ORIGIN <win_idx> <pane_id>
     continue
@@ -32,7 +32,13 @@ while read -r type pane_id win_idx win_name; do
     tmux select-pane -t "$pane_id" -T "" 2>/dev/null || true
 
     if tmux list-windows -t "$SESSION" -F '#{window_index}' | grep -qx "$win_idx"; then
-      tmux join-pane -s "$pane_id" -t "${SESSION}:${win_idx}"
+      # If claude was the first pane, join before the current first pane so order is preserved
+      if [[ -n "${pane_idx:-}" && "$pane_idx" -le 1 ]]; then
+        first=$(tmux list-panes -t "${SESSION}:${win_idx}" -F '#{pane_id}' | head -1)
+        tmux join-pane -b -s "$pane_id" -t "$first"
+      else
+        tmux join-pane -s "$pane_id" -t "${SESSION}:${win_idx}"
+      fi
     else
       # Original window gone — open a new one rather than losing the pane
       tmux new-window -t "${SESSION}" -n "${win_name}"

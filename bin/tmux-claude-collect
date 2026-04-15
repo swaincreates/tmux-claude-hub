@@ -17,8 +17,8 @@ fi
 # so we match on that pattern — more reliable than pane title which changes with task state.
 # Use tab delimiter so window names with spaces don't break field parsing.
 CLAUDE_PANES=$(tmux list-panes -s -t "$SESSION" \
-  -F "#{pane_id}	#{window_index}	#{window_name}	#{pane_current_command}" \
-  | awk -F'\t' '$4 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $1 "\t" $2 "\t" $3}')
+  -F "#{pane_id}	#{window_index}	#{window_name}	#{pane_current_command}	#{pane_index}" \
+  | awk -F'\t' '$4 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $1 "\t" $2 "\t" $3 "\t" $5}')
 
 COUNT=$(echo "$CLAUDE_PANES" | grep -c . || true)
 
@@ -37,7 +37,7 @@ echo "ORIGIN $ORIGIN_WIN $ORIGIN_PANE" >> "$STATE_FILE"
 FIRST=1
 SEEN_WINDOWS=""
 
-while IFS=$'\t' read -r pane_id win_idx win_name; do
+while IFS=$'\t' read -r pane_id win_idx win_name pane_idx; do
   # Save layout for this window once, before we touch it
   if ! echo " $SEEN_WINDOWS " | grep -q " $win_idx "; then
     layout=$(tmux display-message -t "${SESSION}:${win_idx}" -p '#{window_layout}')
@@ -45,7 +45,7 @@ while IFS=$'\t' read -r pane_id win_idx win_name; do
     SEEN_WINDOWS="$SEEN_WINDOWS $win_idx"
   fi
 
-  echo "CLAUDE $pane_id $win_idx $win_name" >> "$STATE_FILE"
+  echo "CLAUDE $pane_id $win_idx $win_name $pane_idx" >> "$STATE_FILE"
 
   # If this is the only pane in the window, create a placeholder so the window survives
   PANE_COUNT=$(tmux list-panes -t "${SESSION}:${win_idx}" -F '#{pane_id}' | wc -l | tr -d ' ')
