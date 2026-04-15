@@ -29,20 +29,13 @@ fi
 
 > "$STATE_FILE"
 
-# Save current window and pane so restore/hub can return here
+# Save current window and pane so restore can return here
 ORIGIN_WIN=$(tmux display-message -p '#{window_index}')
 ORIGIN_PANE=$(tmux display-message -p '#{pane_id}')
 echo "ORIGIN $ORIGIN_WIN $ORIGIN_PANE" >> "$STATE_FILE"
 
-# Create hub window and capture the initial empty pane to kill after
-tmux new-window -t "${SESSION}:0" -n "claude-hub"
-INITIAL_PANE=$(tmux display-message -t "${SESSION}:claude-hub" -p '#{pane_id}')
+FIRST=1
 
-# Enable labeled pane borders on the hub window
-tmux set-window-option -t "${SESSION}:claude-hub" pane-border-status top
-tmux set-window-option -t "${SESSION}:claude-hub" pane-border-format " #{pane_title} "
-
-# Move each claude pane into the hub
 while IFS=$'\t' read -r pane_id win_idx win_name; do
   echo "CLAUDE $pane_id $win_idx $win_name" >> "$STATE_FILE"
 
@@ -54,14 +47,19 @@ while IFS=$'\t' read -r pane_id win_idx win_name; do
     echo "PLACEHOLDER $PLACEHOLDER $win_idx" >> "$STATE_FILE"
   fi
 
-  tmux join-pane -s "$pane_id" -t "${SESSION}:claude-hub"
+  if [[ "$FIRST" -eq 1 ]]; then
+    # Break first claude pane into a new window at index 0 — avoids creating an initial shell pane
+    tmux break-pane -s "$pane_id" -t "${SESSION}:0" -n "claude-hub"
+    tmux set-window-option -t "${SESSION}:claude-hub" pane-border-status top
+    tmux set-window-option -t "${SESSION}:claude-hub" pane-border-format " #{pane_title} "
+    FIRST=0
+  else
+    tmux join-pane -s "$pane_id" -t "${SESSION}:claude-hub"
+  fi
 
   # Label the pane with its source window name
   tmux select-pane -t "$pane_id" -T "$win_name"
 done <<< "$CLAUDE_PANES"
-
-# Kill the initial empty shell pane
-tmux kill-pane -t "$INITIAL_PANE" 2>/dev/null || true
 
 tmux select-layout -t "${SESSION}:claude-hub" tiled
 tmux select-window -t "${SESSION}:claude-hub"
