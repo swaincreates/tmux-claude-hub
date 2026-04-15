@@ -35,8 +35,16 @@ ORIGIN_PANE=$(tmux display-message -p '#{pane_id}')
 echo "ORIGIN $ORIGIN_WIN $ORIGIN_PANE" >> "$STATE_FILE"
 
 FIRST=1
+SEEN_WINDOWS=""
 
 while IFS=$'\t' read -r pane_id win_idx win_name; do
+  # Save layout for this window once, before we touch it
+  if ! echo " $SEEN_WINDOWS " | grep -q " $win_idx "; then
+    layout=$(tmux display-message -t "${SESSION}:${win_idx}" -p '#{window_layout}')
+    echo "LAYOUT $win_idx $layout" >> "$STATE_FILE"
+    SEEN_WINDOWS="$SEEN_WINDOWS $win_idx"
+  fi
+
   echo "CLAUDE $pane_id $win_idx $win_name" >> "$STATE_FILE"
 
   # If this is the only pane in the window, create a placeholder so the window survives
